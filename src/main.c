@@ -26,8 +26,8 @@
 /***** THREADING SETTINGS *****/
 #define STACKSIZE 1024
 #define PRIORITY 7
-#define THREAD_SENSOR_SLEEP 3	 // for 1 Hz, 1 seconds
-#define THREAD_BLE_SLEEP 9		 // for 0.33 Hz, 30 seconds
+#define THREAD_SENSOR_SLEEP 1	 // for 1 Hz, 1 seconds
+#define THREAD_BLE_SLEEP 30		 // for 0.33 Hz, 30 seconds
 void sensor_read_thread(void);	 // Thread function to read sensor data.
 void ble_advertise_thread(void); // Thread function to advertise BLE services.
 K_THREAD_DEFINE(sensor_read_thread_id, STACKSIZE, sensor_read_thread, NULL, NULL, NULL, PRIORITY, 0, 0);
@@ -138,9 +138,9 @@ static const struct bt_data advertisment_data[] = {
  */
 static void callback_ble_connect(struct bt_conn *connection, uint8_t error) {
 	if (error) {
-		LOG_ERR("Connection failed (error 0x%02x).\n", error);
+		LOG_ERR("Connection failed (error 0x%02x).", error);
 	} else {
-		LOG_INF("A new BLE connection handled!\n");
+		LOG_INF("A new BLE connection handled!");
 	}
 }
 
@@ -149,7 +149,7 @@ static void callback_ble_connect(struct bt_conn *connection, uint8_t error) {
  * is called by the Zephyr Bluetooth stack. No need to call it manually.
  */
 static void callback_ble_disconnect(struct bt_conn *connection, uint8_t reason) {
-	LOG_INF("BLE disconnected (reason 0x%02x).\n", reason);
+	LOG_INF("BLE disconnected (reason 0x%02x).", reason);
 }
 
 /* This macro defines the connection callbacks. The callbacks are called by the Zephyr
@@ -191,7 +191,7 @@ static void callback_ble_pairing_cancel(struct bt_conn *connection) {
 	char addr[BT_ADDR_LE_STR_LEN];
 	bt_addr_le_to_str(bt_conn_get_dst(connection), addr, sizeof(addr));
 
-	LOG_ERR("BLE pairing cancelled: %s.\n", addr);
+	LOG_ERR("BLE pairing cancelled: %s.", addr);
 }
 
 /* This macro defines the pairing callbacks. The callbacks are called by the Zephyr
@@ -235,7 +235,7 @@ static void update_sensor_data(const struct device *dev) {
 	// Check if the device is ready.
 	if (dev != NULL) {
 		// LOG
-		LOG_DBG("Fetching sensor data.\n");
+		LOG_DBG("Fetching sensor data.");
 		// Read the sensor data.
 		sensor_sample_fetch(dev);
 		sensor_channel_get(dev, SENSOR_CHAN_AMBIENT_TEMP, &temp_value);
@@ -244,7 +244,7 @@ static void update_sensor_data(const struct device *dev) {
 	} else {
 		// If the device is not ready, or not found, sample the sensor 
 		// with dummy simulated values.
-		// printk("INFO: Simulating sensor data.\n");
+		// printk("INFO: Simulating sensor data.");
 
 		// Sample the sensor with dummy values.
 		temp_value.val1 = sim_temperature;
@@ -274,7 +274,7 @@ static void update_sensor_data(const struct device *dev) {
 	double humidity = sensor_value_to_double(&humidity_value);
 
 	// Debug LOG
-	LOG_DBG("Temperature: %.2f C, Pressure: %.2f hPa, Humidity: %.2f\n", temperature, pressure, humidity);
+	LOG_DBG("Temperature: %.2f C, Pressure: %.2f hPa, Humidity: %.2f", temperature, pressure, humidity);
 
 	// Create a struct to store the sensor readings.
 	struct sensor_value_data_t tx_data = {
