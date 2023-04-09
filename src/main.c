@@ -1,10 +1,12 @@
-#include <zephyr/types.h>
+
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
+#include <zephyr/types.h>
+#include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/byteorder.h>
-#include <zephyr/kernel.h>
+#include <zephyr/sys/__assert.h>
 
 /***** DEVICE TREE IMPORTS *****/
 #include <zephyr/device.h>
@@ -20,11 +22,15 @@
 #include <zephyr/bluetooth/services/bas.h>
 #include <zephyr/bluetooth/services/hrs.h>
 
-/* Function interfaces to be used in main */
-static const struct device *get_bme280_device(void);
-static void fetch_sensor_data(const struct device*, struct sensor_value*, struct sensor_value*, struct sensor_value*);
-static void start_bluetooth_advertisement(void);
-static struct bt_conn_auth_cb callback_ble_display_info;
+/***** Threading Settings *****/
+#define STACKSIZE 1024
+#define PRIORITY 7
+#define THREAD_SENSOR_SLEEP 3	 // for 1 Hz, 1 seconds
+#define THREAD_BLE_SLEEP 9		 // for 0.33 Hz, 30 seconds
+void sensor_read_thread(void);	 // Thread function to read sensor data.
+void ble_advertise_thread(void); // Thread function to advertise BLE services.
+K_THREAD_DEFINE(sensor_read_thread_id, STACKSIZE, sensor_read_thread, NULL, NULL, NULL, PRIORITY, 0, 0);
+K_THREAD_DEFINE(ble_advertise_thread_id, STACKSIZE, ble_advertise_thread, NULL, NULL, NULL, PRIORITY, 0, 0);
 
 /***** Simulation Values (if needed) *****/
 #define DEFAULT_BATTERY_LEVEL 73
@@ -36,35 +42,66 @@ static uint8_t sim_temperature = DEFAULT_TEMPERATURE;
 static uint8_t sim_pressure = DEFAULT_PRESSURE;
 static uint8_t sim_humidity = DEFAULT_HUMIDITY;
 
-void main(void) {
+/***** Elements for Sensor Readings *****/
+struct sensor_value_data_t {
+	void *lifo_reserved;
+	double temp_reading;
+	double press_reading;
+	double humid_reading;
+};
+K_LIFO_DEFINE(sensor_value_lifo);
+
+/***** Elements for Moving Median Filtering *****/
+#define DEFAULT_WINDOW_SIZE 5
+
+/* Function interfaces to be used in main */
+static const struct device *get_bme280_device(void);
+static struct bt_conn_auth_cb callback_ble_display_info;
+static void update_sensor_data(const struct device*);
+static void start_bluetooth_advertisement(void);
+struct sensor_value_data_t* filter_sensor_value(uint8_t window_size);
+
+
+void sensor_read_thread(void) {
+	// Get the BME280 device.
+	const struct device *bme280_device = get_bme280_device();
+
+	// Start the sensor readings.
+	while (1) {
+		update_sensor_data(bme280_device);
+
+		// Sleep for THREAD_SLEEP seconds.
+		k_sleep(K_SECONDS(THREAD_SENSOR_SLEEP));
+	}
+}
+
+void ble_advertise_thread(void) {
 	int error = bt_enable(NULL);
 	if (error) {
 		printk("ERROR: Bluetooth initilisation is failed with error code %d.\n", error);
 		return;
 	}
 
-	// Get the BME280 device.
-	const struct device *bme280_device = get_bme280_device();
-
 	// Start BLE services.
 	start_bluetooth_advertisement();
 	bt_conn_auth_cb_register(&callback_ble_display_info);
-
-	// Variables to store sensor data.
-	struct sensor_value temp, press, humidity;
-
+	
 	while (1) {
-		k_sleep(K_SECONDS(1));
-
-		/* Temperature, pressure and humidity measurements simulation */
-		fetch_sensor_data(bme280_device, &temp, &press, &humidity);
-		printk("T: %d C; P: %d kPa; H: %d %%\n", temp.val1, press.val1, humidity.val1);
+		// Get the sensor data from the filter.
+		struct sensor_value_data_t *filtered_values = filter_sensor_value(DEFAULT_WINDOW_SIZE);
+		printk("Temp: %.2f Press: %.2f Humid: %.2f\n",
+			filtered_values->temp_reading, filtered_values->press_reading, filtered_values->humid_reading);
 
 		/* Heartrate measurements simulation */
-		bt_hrs_notify(temp.val1);
+		bt_hrs_notify(filtered_values->temp_reading);
 
 		/* Battery level simulation */
-		bt_bas_set_battery_level(press.val1);
+		bt_bas_set_battery_level(filtered_values->humid_reading);
+
+		k_free(filtered_values);
+
+		// Sleep for THREAD_SLEEP seconds.
+		k_sleep(K_SECONDS(THREAD_BLE_SLEEP));
 	}
 }
 
@@ -79,7 +116,6 @@ static const struct bt_data advertisment_data[] = {
 		      BT_UUID_16_ENCODE(BT_UUID_BAS_VAL),
 		      BT_UUID_16_ENCODE(BT_UUID_DIS_VAL))
 };
-
 
 /* This function is called when the BLE connection is established. If the connection
  * is successful, the function will print "INFO: Connected". Otherwise, it will print
@@ -110,7 +146,6 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.connected = callback_ble_connect,
 	.disconnected = callback_ble_disconnect,
 };
-
 
 /* This function is the main handler for the BLE advertisement. It should be called
  * after the BLE services are started. The function will start the BLE advertisement. 
@@ -179,45 +214,144 @@ static const struct device *get_bme280_device(void) {
 /* Read the I2C BME280 sensor, or simulate the sensor data if the sensor is not
  * available. 
  */
-static void fetch_sensor_data(
-	const struct device *dev, 
-	struct sensor_value *temp,
-	struct sensor_value *press,
-	struct sensor_value *humidity
-) {
+static void update_sensor_data(const struct device *dev) {
+	// Variables to store sensor data.
+	struct sensor_value temp_value, press_value, humidity_value;
+
 	// Check if the device is ready.
 	if (dev != NULL) {
 		// LOG
 		printk("INFO: Fetching sensor data.\n");
 		// Read the sensor data.
 		sensor_sample_fetch(dev);
-		sensor_channel_get(dev, SENSOR_CHAN_AMBIENT_TEMP, temp);
-		sensor_channel_get(dev, SENSOR_CHAN_PRESS, press);
-		sensor_channel_get(dev, SENSOR_CHAN_HUMIDITY, humidity);
-		return;
+		sensor_channel_get(dev, SENSOR_CHAN_AMBIENT_TEMP, &temp_value);
+		sensor_channel_get(dev, SENSOR_CHAN_PRESS, &press_value);
+		sensor_channel_get(dev, SENSOR_CHAN_HUMIDITY, &humidity_value);
+	} else {
+		// If the device is not ready, or not found, sample the sensor 
+		// with dummy simulated values.
+		// printk("INFO: Simulating sensor data.\n");
+
+		// Sample the sensor with dummy values.
+		temp_value.val1 = sim_temperature;
+		temp_value.val2 = sim_temperature * 2 * 1000;
+		press_value.val1 = sim_pressure;
+		press_value.val2 = sim_pressure * 2 * 1000;
+		humidity_value.val1 = sim_humidity;
+		humidity_value.val2 = sim_humidity * 2 * 1000;
+
+		// Debug LOG
+		// printk("DEBUG: Simulated temperature: %d.%d C, pressure: %d.%d hPa, humidity: %d.%d %%\n", temp_value.val1, temp_value.val2, press_value.val1, press_value.val2, humidity_value.val1, humidity_value.val2);
+
+		// Decrease the dummy values.
+		sim_temperature -= 1;
+		sim_pressure -= 3;
+		sim_humidity -= 2;
+
+		// If the dummy values are below 0, reset them.
+		if (sim_temperature < 0)
+			sim_temperature = DEFAULT_TEMPERATURE;
+		if (sim_pressure < 0)
+			sim_pressure = DEFAULT_PRESSURE;
+		if (sim_humidity < 0)
+			sim_humidity = DEFAULT_HUMIDITY;
+
+		// Debug LOG
+		// printk("DEBUG: Simulation values: %d C, pressure: %d hPa, humidity: %d %%\n",sim_temperature, sim_pressure, sim_humidity);
 	}
-	// If the device is not ready, or not found, sample the sensor 
-	// with dummy simulated values.
-	printk("INFO: Simulating sensor data.\n");
 
-	// Sample the sensor with dummy values.
-	temp->val1 = sim_temperature;
-	temp->val2 = 0;
-	press->val1 = sim_pressure;
-	press->val2 = 0;
-	humidity->val1 = sim_humidity;
-	humidity->val2 = 0;
+	// Convert the sensor reading into a float.
+	double temperature = sensor_value_to_double(&temp_value);
+	double pressure = sensor_value_to_double(&press_value);
+	double humidity = sensor_value_to_double(&humidity_value);
 
-	// Decrease the dummy values.
-	sim_temperature -= 1;
-	sim_pressure -= 3;
-	sim_humidity -= 2;
+	// Debug LOG
+	printk("DEBUG: Temperature: %.2f C, Pressure: %.2f hPa, Humidity: %.2f\n", temperature, pressure, humidity);
 
-	// If the dummy values are below 0, reset them.
-	if (sim_temperature < 0)
-		sim_temperature = DEFAULT_TEMPERATURE;
-	if (sim_pressure < 0)
-		sim_pressure = DEFAULT_PRESSURE;
-	if (sim_humidity < 0)
-		sim_humidity = DEFAULT_HUMIDITY;
+	// Create a struct to store the sensor readings.
+	struct sensor_value_data_t tx_data = {
+		.temp_reading = temperature,
+		.press_reading = pressure,
+		.humid_reading = humidity,
+	};
+
+	size_t datatype_size = sizeof(struct sensor_value_data_t);
+	char *mem_ptr = k_malloc(datatype_size);
+	__ASSERT_NO_MSG(mem_ptr != 0);
+	memcpy(mem_ptr, &tx_data, datatype_size);
+
+	k_lifo_put(&sensor_value_lifo, mem_ptr);
+}
+
+struct sensor_value_data_t* filter_sensor_value(uint8_t window_size) {
+	// Check if the window size is an odd number.
+	if (window_size % 2 == 0) {
+		printk("ERROR: Window size must be an odd number.\n");
+		printk("Using default window size: %d.\n", DEFAULT_WINDOW_SIZE);
+		window_size = DEFAULT_WINDOW_SIZE;
+	}
+
+	// Create a window to store the sensor values.
+	uint8_t temp_window_index = 0;
+	float temp_window[window_size];
+	uint8_t press_window_size = 0;
+	float press_window[window_size];
+	uint8_t humid_window_size = 0;
+	float humid_window[window_size];
+	
+	// Get the last sensor values for windowing operation.
+	for (int i = 0; i < window_size; i++) {
+		// Get the last sensor values.
+		struct sensor_value_data_t *rx_data = k_lifo_get(&sensor_value_lifo, K_FOREVER);
+		
+		// Store the sensor values in the window.
+		temp_window[i] = rx_data->temp_reading;
+		press_window[i] = rx_data->press_reading;
+		humid_window[i] = rx_data->humid_reading;
+
+		k_free(rx_data);
+	}
+
+	// Sort the windows.
+	for (int i = 0; i < window_size; i++) {
+		for (int j = i + 1; j < window_size; j++) {
+			if (temp_window[i] > temp_window[j]) {
+				float temp = temp_window[i];
+				temp_window[i] = temp_window[j];
+				temp_window[j] = temp;
+			}
+			if (press_window[i] > press_window[j]) {
+				float temp = press_window[i];
+				press_window[i] = press_window[j];
+				press_window[j] = temp;
+			}
+			if (humid_window[i] > humid_window[j]) {
+				float temp = humid_window[i];
+				humid_window[i] = humid_window[j];
+				humid_window[j] = temp;
+			}
+		}
+	}
+
+	// Get the median value.
+	float temp_median = temp_window[window_size / 2];
+	float press_median = press_window[window_size / 2];
+	float humid_median = humid_window[window_size / 2];
+
+	// Debug LOG
+	printk("DEBUG: Temperature median: %.2f C, Pressure median: %.2f hPa, Humidity median: %.2f %%\n", temp_median, press_median, humid_median);
+
+	// Return the median as sensor_value_data_t.
+	struct sensor_value_data_t median_values = {
+		.temp_reading = temp_median,
+		.press_reading = press_median,
+		.humid_reading = humid_median,
+	};
+
+	size_t datatype_size = sizeof(struct sensor_value_data_t);
+	char *median_values_ptr = k_malloc(datatype_size);
+	__ASSERT_NO_MSG(median_values_ptr != 0);
+	memcpy(median_values_ptr, &median_values, datatype_size);
+
+	return median_values_ptr;
 }
