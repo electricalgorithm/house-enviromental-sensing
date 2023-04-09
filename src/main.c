@@ -61,7 +61,10 @@ static void update_sensor_data(const struct device*);
 static void start_bluetooth_advertisement(void);
 struct sensor_value_data_t* filter_sensor_value(uint8_t window_size);
 
-
+/* Thread for producer task. This thread will read the sensor data and store it in
+ * the sensor_value_lifo. The thread will sleep for THREAD_SENSOR_SLEEP seconds
+ * before reading the sensor data again.
+ */
 void sensor_read_thread(void) {
 	// Get the BME280 device.
 	const struct device *bme280_device = get_bme280_device();
@@ -75,6 +78,10 @@ void sensor_read_thread(void) {
 	}
 }
 
+/* Thread for consumer task. This thread will read the sensor data from the sensor_value_lifo
+ * and advertise the BLE services. The thread will sleep for THREAD_BLE_SLEEP seconds before
+ * starting the advertisment again.
+ */
 void ble_advertise_thread(void) {
 	int error = bt_enable(NULL);
 	if (error) {
@@ -284,6 +291,11 @@ static void update_sensor_data(const struct device *dev) {
 	k_lifo_put(&sensor_value_lifo, mem_ptr);
 }
 
+/* Read the queued sensor values for a given window size, and return the
+ * median values for each sensor as a sensor_value_data_t pointer. The returned
+ * pointer must be freed by the caller. This function's output is used to
+ * update the BLE advertisement data.
+ */
 struct sensor_value_data_t* filter_sensor_value(uint8_t window_size) {
 	// Check if the window size is an odd number.
 	if (window_size % 2 == 0) {
