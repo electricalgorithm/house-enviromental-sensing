@@ -1,4 +1,4 @@
-# House Environmental Sharing
+# House Environmental Monitoring
 A Zephyr RTOS application shares the environmental data from BME280 sensor with BLE advertisement. 
 
 - It shares temperature, pressure and the humidity.
