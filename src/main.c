@@ -7,6 +7,7 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/__assert.h>
+#include <zephyr/logging/log.h>
 
 /***** DEVICE TREE IMPORTS *****/
 #include <zephyr/device.h>
@@ -22,7 +23,7 @@
 #include <zephyr/bluetooth/services/bas.h>
 #include <zephyr/bluetooth/services/hrs.h>
 
-/***** Threading Settings *****/
+/***** THREADING SETTINGS *****/
 #define STACKSIZE 1024
 #define PRIORITY 7
 #define THREAD_SENSOR_SLEEP 3	 // for 1 Hz, 1 seconds
@@ -31,8 +32,9 @@ void sensor_read_thread(void);	 // Thread function to read sensor data.
 void ble_advertise_thread(void); // Thread function to advertise BLE services.
 K_THREAD_DEFINE(sensor_read_thread_id, STACKSIZE, sensor_read_thread, NULL, NULL, NULL, PRIORITY, 0, 0);
 K_THREAD_DEFINE(ble_advertise_thread_id, STACKSIZE, ble_advertise_thread, NULL, NULL, NULL, PRIORITY, 0, 0);
+LOG_MODULE_REGISTER(HouseEnvironmentMonitor);
 
-/***** Simulation Values (if needed) *****/
+/***** SIMULATION SETTINGS *****/
 #define DEFAULT_BATTERY_LEVEL 73
 #define DEFAULT_TEMPERATURE 25
 #define DEFAULT_PRESSURE 255
@@ -42,7 +44,8 @@ static uint8_t sim_temperature = DEFAULT_TEMPERATURE;
 static uint8_t sim_pressure = DEFAULT_PRESSURE;
 static uint8_t sim_humidity = DEFAULT_HUMIDITY;
 
-/***** Elements for Sensor Readings *****/
+/***** SENSOR READING ELEMENTS *****/
+#define DEFAULT_WINDOW_SIZE 5
 struct sensor_value_data_t {
 	void *lifo_reserved;
 	double temp_reading;
@@ -51,10 +54,7 @@ struct sensor_value_data_t {
 };
 K_LIFO_DEFINE(sensor_value_lifo);
 
-/***** Elements for Moving Median Filtering *****/
-#define DEFAULT_WINDOW_SIZE 5
-
-/* Function interfaces to be used in main */
+/***** FUNCTION INTERFACES *****/
 static const struct device *get_bme280_device(void);
 static struct bt_conn_auth_cb callback_ble_display_info;
 static void update_sensor_data(const struct device*);
@@ -78,7 +78,7 @@ void sensor_read_thread(void) {
 void ble_advertise_thread(void) {
 	int error = bt_enable(NULL);
 	if (error) {
-		printk("ERROR: Bluetooth initilisation is failed with error code %d.\n", error);
+		LOG_ERR("ERROR: Bluetooth initilisation is failed with error code %d.", error);
 		return;
 	}
 
@@ -89,7 +89,14 @@ void ble_advertise_thread(void) {
 	while (1) {
 		// Get the sensor data from the filter.
 		struct sensor_value_data_t *filtered_values = filter_sensor_value(DEFAULT_WINDOW_SIZE);
-		printk("Temp: %.2f Press: %.2f Humid: %.2f\n",
+		
+		// Check if the sensor data is available.
+		if (filtered_values == NULL) {
+			LOG_ERR("ERROR: No sensor data available.");
+			continue;
+		}
+
+		LOG_INF("Sending sensor values with BLE: (%.2f C) (%.2f mmHg) (%.2f %%)",
 			filtered_values->temp_reading, filtered_values->press_reading, filtered_values->humid_reading);
 
 		/* Heartrate measurements simulation */
@@ -124,9 +131,9 @@ static const struct bt_data advertisment_data[] = {
  */
 static void callback_ble_connect(struct bt_conn *connection, uint8_t error) {
 	if (error) {
-		printk("ERROR: Connection failed (error 0x%02x).\n", error);
+		LOG_ERR("Connection failed (error 0x%02x).\n", error);
 	} else {
-		printk("INFO: Connected\n");
+		LOG_INF("A new BLE connection handled!\n");
 	}
 }
 
@@ -135,7 +142,7 @@ static void callback_ble_connect(struct bt_conn *connection, uint8_t error) {
  * is called by the Zephyr Bluetooth stack. No need to call it manually.
  */
 static void callback_ble_disconnect(struct bt_conn *connection, uint8_t reason) {
-	printk("INFO: Disconnected (reason 0x%02x).\n", reason);
+	LOG_INF("BLE disconnected (reason 0x%02x).\n", reason);
 }
 
 /* This macro defines the connection callbacks. The callbacks are called by the Zephyr
@@ -151,7 +158,7 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
  * after the BLE services are started. The function will start the BLE advertisement. 
  */
 static void start_bluetooth_advertisement(void) {
-	printk("INFO: Bluetooth initialized.\n");
+	LOG_INF("Bluetooth initialized.");
 
 	int error = bt_le_adv_start(
         BT_LE_ADV_CONN_NAME,
@@ -162,11 +169,11 @@ static void start_bluetooth_advertisement(void) {
     );
 
 	if (error) {
-		printk("ERROR: Advertising failed to start (err %d)\n", error);
+		LOG_ERR("Advertising failed to start (err %d)", error);
 		return;
 	}
 
-	printk("INFO: Advertising successfully started.\n");
+	LOG_DBG("Advertising successfully started.");
 }
 
 /* This function is called when the BLE pairing is cancelled. If the pairing is
@@ -177,7 +184,7 @@ static void callback_ble_pairing_cancel(struct bt_conn *connection) {
 	char addr[BT_ADDR_LE_STR_LEN];
 	bt_addr_le_to_str(bt_conn_get_dst(connection), addr, sizeof(addr));
 
-	printk("ERROR: Pairing cancelled: %s.\n", addr);
+	LOG_ERR("BLE pairing cancelled: %s.\n", addr);
 }
 
 /* This macro defines the pairing callbacks. The callbacks are called by the Zephyr
@@ -197,17 +204,17 @@ static const struct device *get_bme280_device(void) {
 
 	if (dev == NULL) {
 		/* No such node, or the node does not have status "okay". */
-		printk("WARNING: No BME280 sensor found.\n");
+		LOG_WRN("No BME280 sensor found. Will be using simulator instead.");
 		return NULL;
 	}
 
 	if (!device_is_ready(dev)) {
-		printk("\nError: Device \"%s\" is not ready. Check the driver initialization logs for errors.\n",
+		LOG_ERR("Error: Device \"%s\" is not ready. Check the driver initialization logs for errors.",
 		       dev->name);
 		return NULL;
 	}
 
-	printk("INFO: Found BME280 device \"%s\", \n", dev->name);
+	LOG_INF("Found BME280 device \"%s\"", dev->name);
 	return dev;
 }
 
@@ -221,7 +228,7 @@ static void update_sensor_data(const struct device *dev) {
 	// Check if the device is ready.
 	if (dev != NULL) {
 		// LOG
-		printk("INFO: Fetching sensor data.\n");
+		LOG_DBG("Fetching sensor data.\n");
 		// Read the sensor data.
 		sensor_sample_fetch(dev);
 		sensor_channel_get(dev, SENSOR_CHAN_AMBIENT_TEMP, &temp_value);
@@ -240,9 +247,6 @@ static void update_sensor_data(const struct device *dev) {
 		humidity_value.val1 = sim_humidity;
 		humidity_value.val2 = sim_humidity * 2 * 1000;
 
-		// Debug LOG
-		// printk("DEBUG: Simulated temperature: %d.%d C, pressure: %d.%d hPa, humidity: %d.%d %%\n", temp_value.val1, temp_value.val2, press_value.val1, press_value.val2, humidity_value.val1, humidity_value.val2);
-
 		// Decrease the dummy values.
 		sim_temperature -= 1;
 		sim_pressure -= 3;
@@ -255,9 +259,6 @@ static void update_sensor_data(const struct device *dev) {
 			sim_pressure = DEFAULT_PRESSURE;
 		if (sim_humidity < 0)
 			sim_humidity = DEFAULT_HUMIDITY;
-
-		// Debug LOG
-		// printk("DEBUG: Simulation values: %d C, pressure: %d hPa, humidity: %d %%\n",sim_temperature, sim_pressure, sim_humidity);
 	}
 
 	// Convert the sensor reading into a float.
@@ -266,7 +267,7 @@ static void update_sensor_data(const struct device *dev) {
 	double humidity = sensor_value_to_double(&humidity_value);
 
 	// Debug LOG
-	printk("DEBUG: Temperature: %.2f C, Pressure: %.2f hPa, Humidity: %.2f\n", temperature, pressure, humidity);
+	LOG_DBG("Temperature: %.2f C, Pressure: %.2f hPa, Humidity: %.2f\n", temperature, pressure, humidity);
 
 	// Create a struct to store the sensor readings.
 	struct sensor_value_data_t tx_data = {
@@ -286,9 +287,8 @@ static void update_sensor_data(const struct device *dev) {
 struct sensor_value_data_t* filter_sensor_value(uint8_t window_size) {
 	// Check if the window size is an odd number.
 	if (window_size % 2 == 0) {
-		printk("ERROR: Window size must be an odd number.\n");
-		printk("Using default window size: %d.\n", DEFAULT_WINDOW_SIZE);
-		window_size = DEFAULT_WINDOW_SIZE;
+		LOG_ERR("Window size must be an odd number.");
+		return NULL;
 	}
 
 	// Create a window to store the sensor values.
@@ -339,7 +339,7 @@ struct sensor_value_data_t* filter_sensor_value(uint8_t window_size) {
 	float humid_median = humid_window[window_size / 2];
 
 	// Debug LOG
-	printk("DEBUG: Temperature median: %.2f C, Pressure median: %.2f hPa, Humidity median: %.2f %%\n", temp_median, press_median, humid_median);
+	LOG_DBG("Temperature median: %.2f C, Pressure median: %.2f hPa, Humidity median: %.2f %%", temp_median, press_median, humid_median);
 
 	// Return the median as sensor_value_data_t.
 	struct sensor_value_data_t median_values = {
