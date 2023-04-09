@@ -277,7 +277,7 @@ static void update_sensor_data(const struct device *dev) {
 	};
 
 	size_t datatype_size = sizeof(struct sensor_value_data_t);
-	char *mem_ptr = k_malloc(datatype_size);
+	struct sensor_value_data_t *mem_ptr = k_malloc(datatype_size);
 	__ASSERT_NO_MSG(mem_ptr != 0);
 	memcpy(mem_ptr, &tx_data, datatype_size);
 
@@ -349,7 +349,7 @@ struct sensor_value_data_t* filter_sensor_value(uint8_t window_size) {
 	};
 
 	size_t datatype_size = sizeof(struct sensor_value_data_t);
-	char *median_values_ptr = k_malloc(datatype_size);
+	struct sensor_value_data_t *median_values_ptr = k_malloc(datatype_size);
 	__ASSERT_NO_MSG(median_values_ptr != 0);
 	memcpy(median_values_ptr, &median_values, datatype_size);
 
