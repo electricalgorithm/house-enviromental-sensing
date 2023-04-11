@@ -3,11 +3,49 @@
 #include <zephyr/bluetooth/conn.h>
 #include <zephyr/bluetooth/uuid.h>
 #include <zephyr/bluetooth/gatt.h>
-#include <zephyr/bluetooth/services/bas.h>
-#include <zephyr/bluetooth/services/hrs.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/byteorder.h>
 
 LOG_MODULE_DECLARE(HouseEnvironmentMonitor);
+
+/***** To have BLE READ operation easily. *****/
+uint16_t last_temp_reading = 0;
+uint16_t last_press_reading = 0;
+uint16_t last_humid_reading = 0;
+
+struct sensor_value_data_t {
+	void *lifo_reserved;
+	double temp_reading;
+	double press_reading;
+	double humid_reading;
+};
+
+static void ble_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value) {
+	LOG_INF("Notifications %s.", (value == BT_GATT_CCC_NOTIFY) ? "enabled" : "disabled");
+}
+
+static ssize_t ble_read_operation(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset) {
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, &last_temp_reading, sizeof(last_temp_reading));
+}
+
+BT_GATT_SERVICE_DEFINE(
+    ess_service, BT_GATT_PRIMARY_SERVICE(BT_UUID_ESS),
+
+    /* Temperature Sensor */
+    BT_GATT_CHARACTERISTIC(BT_UUID_TEMPERATURE, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, ble_read_operation, NULL, &last_temp_reading),
+    BT_GATT_CCC(ble_ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CUD("BME280 Temperature Sensor", BT_GATT_PERM_READ),
+
+    /* Pressure Sensor */
+    BT_GATT_CHARACTERISTIC(BT_UUID_TRUE_WIND_SPEED, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, ble_read_operation, NULL, &last_press_reading),
+    BT_GATT_CCC(ble_ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CUD("BME280 Pressure Sensor", BT_GATT_PERM_READ),
+
+    /* Humidity Sensor */
+    BT_GATT_CHARACTERISTIC(BT_UUID_HUMIDITY, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, ble_read_operation, NULL, &last_humid_reading),
+    BT_GATT_CCC(ble_ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
+	BT_GATT_CUD("BME280 Humidity Sensor", BT_GATT_PERM_READ),
+);
 
 
 /* This array defines the BLE advertisement data. The data is used to advertise the
@@ -15,11 +53,15 @@ LOG_MODULE_DECLARE(HouseEnvironmentMonitor);
  * data to connect to the BLE device. The data needs to be defined in bt_le_adv_start().
  */
 static const struct bt_data advertisment_data[] = {
-	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL,
-		      BT_UUID_16_ENCODE(BT_UUID_HRS_VAL),
-		      BT_UUID_16_ENCODE(BT_UUID_BAS_VAL),
-		      BT_UUID_16_ENCODE(BT_UUID_DIS_VAL))
+	BT_DATA_BYTES(
+		BT_DATA_FLAGS,
+		(BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)
+	),
+	BT_DATA_BYTES(BT_DATA_GAP_APPEARANCE, 0x00, 0x03),
+	BT_DATA_BYTES(
+		BT_DATA_UUID16_ALL,
+		BT_UUID_16_ENCODE(BT_UUID_ESS_VAL),
+	),
 };
 
 /* This function is called when the BLE connection is established. If the connection
@@ -92,3 +134,23 @@ static void callback_ble_pairing_cancel(struct bt_conn *connection) {
 struct bt_conn_auth_cb callback_ble_display_info = {
 	.cancel = callback_ble_pairing_cancel,
 };
+
+
+ssize_t read_u16(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset) {
+	const uint16_t *u16 = attr->user_data;
+	uint16_t value = sys_cpu_to_le16(*u16);
+ 	return bt_gatt_attr_read(conn, attr, buf, len, offset, &value, sizeof(value));
+}
+
+
+void notify_ble_connected_device(struct sensor_value_data_t *value_to_notify) {
+	// Update global last_temp_reading variable with the new value.
+	last_temp_reading = sys_cpu_to_le16(value_to_notify->temp_reading);
+	last_press_reading = sys_cpu_to_le16(value_to_notify->press_reading);
+	last_humid_reading = sys_cpu_to_le16(value_to_notify->humid_reading);
+
+	// Notify the connected BLE device about the new value.
+	bt_gatt_notify_uuid(NULL, BT_UUID_TEMPERATURE, &ess_service.attrs[0], &last_temp_reading, sizeof(last_temp_reading));
+	bt_gatt_notify_uuid(NULL, BT_UUID_TRUE_WIND_SPEED, &ess_service.attrs[0], &last_press_reading, sizeof(last_press_reading));
+	bt_gatt_notify_uuid(NULL, BT_UUID_HUMIDITY, &ess_service.attrs[0], &last_humid_reading, sizeof(last_humid_reading));
+}

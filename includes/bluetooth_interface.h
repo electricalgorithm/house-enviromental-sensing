@@ -12,4 +12,9 @@ void start_bluetooth_advertisement(void);
  */
 extern struct bt_conn_auth_cb callback_ble_display_info;
 
+/* This function is a wrapper for sending data to the BLE client. It is called by
+ * the sensor_read_thread. The function will notify the BLE client.
+ */
+void notify_ble_connected_device(struct sensor_value_data_t*);
+
 #endif // BLUETOOTH_INTERFACE_H
