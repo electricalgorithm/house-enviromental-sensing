@@ -2,8 +2,6 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
-#include <zephyr/bluetooth/services/bas.h>
-#include <zephyr/bluetooth/services/hrs.h>
 
 #include <sensor_interface.h>
 #include <bluetooth_interface.h>
@@ -77,11 +75,9 @@ void ble_advertise_thread(void) {
 			LOG_INF("Sending sensor values with BLE: (%.2f C) (%.2f mmHg) (%.2f %%)",
 				filtered_values->temp_reading, filtered_values->press_reading, filtered_values->humid_reading);
 
-			/* Heartrate measurements simulation */
-			bt_hrs_notify(filtered_values->temp_reading);
 
-			/* Battery level simulation */
-			bt_bas_set_battery_level(filtered_values->humid_reading);
+			// Notify the BLE connected device with new filtered values.
+			notify_ble_connected_device(filtered_values);
 
 			// Free the memory.
 			k_free(filtered_values);
