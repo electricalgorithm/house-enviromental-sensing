@@ -1,14 +1,10 @@
 #ifndef SENSOR_INTERFACE_H
 #define SENSOR_INTERFACE_H
 
+#include <structs.h>
+
 extern struct k_lifo sensor_value_lifo;
 
-struct sensor_value_data_t {
-	void *lifo_reserved;
-	double temp_reading;
-	double press_reading;
-	double humid_reading;
-};
 
 /* This function gets the device from the device tree. Note that the device
  * should have "bosch,bme280" as compatible string.
@@ -27,14 +23,14 @@ const struct device *get_bme280_device(void);
 void update_sensor_data(const struct device *dev);
 
 /* Read the queued sensor values for a given window size, and return the
- * median values for each sensor as a sensor_value_data_t pointer. The returned
+ * median values for each sensor as a values_for_ble_t pointer. The returned
  * pointer must be freed by the caller. This function's output is used to
  * update the BLE advertisement data.
  * 
  * @param window_size The window size to use for the median filter.
- * @return Pointer to the sensor_value_data_t struct, or NULL if the window size
+ * @return Pointer to the values_for_ble_t struct, or NULL if the window size
  *        is not an odd number.
  */
-struct sensor_value_data_t* filter_sensor_value(uint8_t window_size);
+struct values_for_ble_t* filter_sensor_value(uint8_t window_size);
 
 #endif // SENSOR_INTERFACE_H
