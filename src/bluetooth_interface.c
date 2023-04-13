@@ -142,14 +142,14 @@ ssize_t read_u16(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *bu
 void notify_ble_connected_device(struct values_for_ble_t *value_to_notify) {
 	// Save the int part and dec part of the reading into an array.
 	temp_reading = value_to_notify->temp_reading_int * 100 + value_to_notify->temp_reading_dec * 0.0001;
-	press_reading = value_to_notify->press_reading_int * 10 + value_to_notify->press_reading_dec * 0.00001;
+	press_reading = value_to_notify->press_reading_int * 100 + value_to_notify->press_reading_dec * 0.0001;
 
 	// Convert the int part and dec part of the reading into a single integer. It's not realistically implemented.
 	// humid_reading = value_to_notify->hum_reading_int * 100 + value_to_notify->hum_reading_dec;
 
 	LOG_DBG("Notifying BLE connected device with temperature: %d.%d, pressure: %d.%d", 
 		value_to_notify->temp_reading_int, value_to_notify->temp_reading_dec, 
-		value_to_notify->press_reading_int, value_to_notify->press_reading_dec);
+		value_to_notify->press_reading_int*10, value_to_notify->press_reading_dec);
 	LOG_DBG("Temperature: %d", temp_reading);
 	LOG_DBG("Pressure: %d", press_reading);
 	// LOG_INF("Humidity: %d", humid_reading);

@@ -72,9 +72,9 @@ void ble_advertise_thread(void) {
 				continue;
 			}
 
-			LOG_INF("Sending sensor values with BLE: (%d.%d C) (%d.%d Pa)",
+			LOG_INF("Sending sensor values with BLE: (%d.%d C) (%d.%d hPa)",
 				filtered_values->temp_reading_int, filtered_values->temp_reading_dec,
-				filtered_values->press_reading_int, filtered_values->press_reading_dec);
+				filtered_values->press_reading_int*10, filtered_values->press_reading_dec);
 
 			// Notify the BLE connected device with new filtered values.
 			notify_ble_connected_device(filtered_values);
