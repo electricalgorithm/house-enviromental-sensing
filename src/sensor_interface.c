@@ -8,7 +8,7 @@
 
 #include <sensor_interface.h>
 
-LOG_MODULE_DECLARE(HouseEnvironmentMonitor, LOG_LEVEL_DBG);
+LOG_MODULE_DECLARE(HouseEnvironmentMonitor);
 K_LIFO_DEFINE(sensor_value_lifo);
 
 /***** SIMULATION SETTINGS *****/

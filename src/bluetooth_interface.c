@@ -8,7 +8,7 @@
 
 #include <structs.h>
 
-LOG_MODULE_DECLARE(HouseEnvironmentMonitor, LOG_LEVEL_DBG);
+LOG_MODULE_DECLARE(HouseEnvironmentMonitor);
 
 int16_t temp_reading = 0;
 uint32_t press_reading = 0;

@@ -9,7 +9,7 @@
 
 #define WINDOW_SIZE_FOR_FILTER 5
 
-LOG_MODULE_REGISTER(HouseEnvironmentMonitor, LOG_LEVEL_DBG);
+LOG_MODULE_REGISTER(HouseEnvironmentMonitor);
 K_SEM_DEFINE(semaphore_send_ready, 0, 1);
 
 /* Thread for producer task. This thread will read the sensor data and store it in
