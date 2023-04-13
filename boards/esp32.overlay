@@ -6,3 +6,11 @@
 		};
 	};
 };
+
+&i2c0 {
+	bme280@76 {
+		status = "okay";
+		compatible = "bosch,bme280";
+		reg = <0x76>;
+	};
+};
