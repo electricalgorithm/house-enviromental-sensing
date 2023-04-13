@@ -6,45 +6,41 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
 
-LOG_MODULE_DECLARE(HouseEnvironmentMonitor);
+#include <structs.h>
 
-/***** To have BLE READ operation easily. *****/
-uint16_t last_temp_reading = 0;
-uint16_t last_press_reading = 0;
-uint16_t last_humid_reading = 0;
+LOG_MODULE_DECLARE(HouseEnvironmentMonitor, LOG_LEVEL_DBG);
 
-struct sensor_value_data_t {
-	void *lifo_reserved;
-	double temp_reading;
-	double press_reading;
-	double humid_reading;
-};
+int16_t temp_reading = 0;
+uint32_t press_reading = 0;
+// uint16_t humid_reading = 0;
 
 static void ble_ccc_cfg_changed(const struct bt_gatt_attr *attr, uint16_t value) {
 	LOG_INF("Notifications %s.", (value == BT_GATT_CCC_NOTIFY) ? "enabled" : "disabled");
 }
 
 static ssize_t ble_read_operation(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *buf, uint16_t len, uint16_t offset) {
-	return bt_gatt_attr_read(conn, attr, buf, len, offset, &last_temp_reading, sizeof(last_temp_reading));
+	return bt_gatt_attr_read(conn, attr, buf, len, offset, &temp_reading, sizeof(temp_reading));
 }
 
 BT_GATT_SERVICE_DEFINE(
     ess_service, BT_GATT_PRIMARY_SERVICE(BT_UUID_ESS),
 
     /* Temperature Sensor */
-    BT_GATT_CHARACTERISTIC(BT_UUID_TEMPERATURE, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, ble_read_operation, NULL, &last_temp_reading),
+    BT_GATT_CHARACTERISTIC(BT_UUID_TEMPERATURE, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, ble_read_operation, NULL, &temp_reading),
     BT_GATT_CCC(ble_ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CUD("BME280 Temperature Sensor", BT_GATT_PERM_READ),
 
     /* Pressure Sensor */
-    BT_GATT_CHARACTERISTIC(BT_UUID_TRUE_WIND_SPEED, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, ble_read_operation, NULL, &last_press_reading),
+    BT_GATT_CHARACTERISTIC(BT_UUID_PRESSURE, BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, ble_read_operation, NULL, NULL),
     BT_GATT_CCC(ble_ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CUD("BME280 Pressure Sensor", BT_GATT_PERM_READ),
 
-    /* Humidity Sensor */
-    BT_GATT_CHARACTERISTIC(BT_UUID_HUMIDITY, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, ble_read_operation, NULL, &last_humid_reading),
+	/*
+    Humidity Sensor
+    BT_GATT_CHARACTERISTIC(BT_UUID_HUMIDITY, BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, BT_GATT_PERM_READ, ble_read_operation, NULL, &humid_reading),
     BT_GATT_CCC(ble_ccc_cfg_changed, BT_GATT_PERM_READ | BT_GATT_PERM_WRITE),
 	BT_GATT_CUD("BME280 Humidity Sensor", BT_GATT_PERM_READ),
+	*/
 );
 
 
@@ -143,14 +139,27 @@ ssize_t read_u16(struct bt_conn *conn, const struct bt_gatt_attr *attr, void *bu
 }
 
 
-void notify_ble_connected_device(struct sensor_value_data_t *value_to_notify) {
-	// Update global last_temp_reading variable with the new value.
-	last_temp_reading = sys_cpu_to_le16(value_to_notify->temp_reading);
-	last_press_reading = sys_cpu_to_le16(value_to_notify->press_reading);
-	last_humid_reading = sys_cpu_to_le16(value_to_notify->humid_reading);
+void notify_ble_connected_device(struct values_for_ble_t *value_to_notify) {
+	// Save the int part and dec part of the reading into an array.
+	temp_reading = value_to_notify->temp_reading_int * 100 + value_to_notify->temp_reading_dec * 0.0001;
+	press_reading = value_to_notify->press_reading_int * 10 + value_to_notify->press_reading_dec * 0.00001;
 
+	// Convert the int part and dec part of the reading into a single integer. It's not realistically implemented.
+	// humid_reading = value_to_notify->hum_reading_int * 100 + value_to_notify->hum_reading_dec;
+
+	LOG_DBG("Notifying BLE connected device with temperature: %d.%d, pressure: %d.%d", 
+		value_to_notify->temp_reading_int, value_to_notify->temp_reading_dec, 
+		value_to_notify->press_reading_int, value_to_notify->press_reading_dec);
+	LOG_DBG("Temperature: %d", temp_reading);
+	LOG_DBG("Pressure: %d", press_reading);
+	// LOG_INF("Humidity: %d", humid_reading);
+
+	// BLE requires the data to be in little endian format.
+	temp_reading = sys_cpu_to_le16(temp_reading);
+	press_reading = sys_cpu_to_le16(press_reading);
+	
 	// Notify the connected BLE device about the new value.
-	bt_gatt_notify_uuid(NULL, BT_UUID_TEMPERATURE, &ess_service.attrs[0], &last_temp_reading, sizeof(last_temp_reading));
-	bt_gatt_notify_uuid(NULL, BT_UUID_TRUE_WIND_SPEED, &ess_service.attrs[0], &last_press_reading, sizeof(last_press_reading));
-	bt_gatt_notify_uuid(NULL, BT_UUID_HUMIDITY, &ess_service.attrs[0], &last_humid_reading, sizeof(last_humid_reading));
+	bt_gatt_notify_uuid(NULL, BT_UUID_TEMPERATURE, &ess_service.attrs[0], &temp_reading, sizeof(temp_reading));
+	bt_gatt_notify_uuid(NULL, BT_UUID_PRESSURE, &ess_service.attrs[0], &press_reading, sizeof(press_reading));
+	// bt_gatt_notify_uuid(NULL, BT_UUID_HUMIDITY, &ess_service.attrs[0], &humid_reading, sizeof(humid_reading));
 }

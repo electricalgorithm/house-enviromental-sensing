@@ -9,7 +9,7 @@
 
 #define WINDOW_SIZE_FOR_FILTER 5
 
-LOG_MODULE_REGISTER(HouseEnvironmentMonitor);
+LOG_MODULE_REGISTER(HouseEnvironmentMonitor, LOG_LEVEL_DBG);
 K_SEM_DEFINE(semaphore_send_ready, 0, 1);
 
 /* Thread for producer task. This thread will read the sensor data and store it in
@@ -64,7 +64,7 @@ void ble_advertise_thread(void) {
 			LOG_DBG("Sensor data is available to send.");
 
 			// Get the sensor data from the filter.
-			struct sensor_value_data_t *filtered_values = filter_sensor_value(WINDOW_SIZE_FOR_FILTER);
+			struct values_for_ble_t *filtered_values = filter_sensor_value(WINDOW_SIZE_FOR_FILTER);
 		
 			// Check if the sensor data is available.
 			if (filtered_values == NULL) {
@@ -72,9 +72,9 @@ void ble_advertise_thread(void) {
 				continue;
 			}
 
-			LOG_INF("Sending sensor values with BLE: (%.2f C) (%.2f mmHg) (%.2f %%)",
-				filtered_values->temp_reading, filtered_values->press_reading, filtered_values->humid_reading);
-
+			LOG_INF("Sending sensor values with BLE: (%d.%d C) (%d.%d Pa)",
+				filtered_values->temp_reading_int, filtered_values->temp_reading_dec,
+				filtered_values->press_reading_int, filtered_values->press_reading_dec);
 
 			// Notify the BLE connected device with new filtered values.
 			notify_ble_connected_device(filtered_values);
